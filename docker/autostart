@@ -6,8 +6,13 @@
 
 set -u
 
-# 容器内无 GPU，强制软件渲染
-export LIBGL_ALWAYS_SOFTWARE=1
+# 检查是否可用真实 GPU 硬件渲染（仅当 DRI 渲染节点存在且未禁用 DRI 时）：
+if { [ -c /dev/dri/renderD128 ] || [ -c /dev/dri/card0 ] || [ -c /dev/dri/card1 ]; } && [ "${DISABLE_DRI:-0}" != "1" ]; then
+    echo "[autostart] 检测到 GPU 渲染节点且未禁用 DRI，启用硬件渲染加速"
+else
+    # 容器内无 GPU 或已显式禁用 DRI，安全回退到软件渲染
+    export LIBGL_ALWAYS_SOFTWARE=1
+fi
 
 # 解析本实例应用类型与启动信息（APP_BIN / APP_LAUNCH / APP_NAME）
 APP_TYPE=wechat

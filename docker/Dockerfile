@@ -65,8 +65,7 @@ RUN set -eux; \
 # 由 autostart 在启动时按需 mkdir + 建 ~/.local/share/fonts → /config/.fonts 软链（见 docker/autostart）。
 
 ENV LANG=zh_CN.UTF-8 \
-    LC_ALL=zh_CN.UTF-8 \
-    LIBGL_ALWAYS_SOFTWARE=1
+    LC_ALL=zh_CN.UTF-8
 
 # 改 KasmVNC web 客户端的 webpack 产物 dist/*.bundle.js：
 #  (1) 默认开启 IME 输入模式：本地（客户端）输入法打中文，拼音联想在本地完成、只把成品汉字

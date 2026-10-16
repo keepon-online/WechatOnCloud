@@ -6,12 +6,74 @@ import { useAuth } from '../auth';
 import { useInstances } from '../AppShell';
 import { VncAudio } from '../vncAudio';
 
+export type StreamProfile = 'smooth' | 'balanced' | 'clarity';
+
+export function getStreamProfile(): StreamProfile {
+  try {
+    return (window.localStorage.getItem('woc_stream_profile') as StreamProfile) || 'smooth';
+  } catch {
+    return 'smooth';
+  }
+}
+
 // KasmVNC noVNC 页面；反代按实例隔离：/desktop/<id>/* → 对应容器，注入凭据。
-function desktopUrl(id: string) {
+// 优化流畅度：注入帧率 (framerate)、画质档位 (video_quality)、动态视频分辨率上限、本地指针、WebP
+function desktopUrl(id: string, profile: StreamProfile = getStreamProfile()) {
+  let streamParams = '';
+  if (profile === 'smooth') {
+    // 极速流畅（默认推荐）：突破 24fps 限制升至 60fps；动态视频分辨率上限 1080p，避免下采样成模糊马赛克；
+    // video_out_time=1 让滑动停止后 1s 内立即切回高保真清晰画面；启用本地鼠标指针与 WebP 高效编解码
+    streamParams =
+      '&video_quality=3&framerate=60&max_video_resolution_x=1920&max_video_resolution_y=1080&dynamic_quality_min=6&video_out_time=1&prefer_local_cursor=true&enable_webp=true&show_dot=false';
+  } else if (profile === 'clarity') {
+    // 高清画质：高保真画质优先，30fps，适合精细图文与高保真阅读
+    streamParams =
+      '&video_quality=4&framerate=30&video_out_time=1&prefer_local_cursor=true&enable_webp=true&show_dot=false';
+  } else {
+    // 均衡模式：30fps，动态下限 720p，兼顾流畅度与低功耗 NAS CPU / 移动端弱网环境
+    streamParams =
+      '&video_quality=10&framerate=30&max_video_resolution_x=1280&max_video_resolution_y=720&dynamic_quality_min=4&dynamic_quality_max=8&video_out_time=1&prefer_local_cursor=true&enable_webp=true&show_dot=false';
+  }
+
   return (
     `/desktop/${id}/vnc/index.html?autoconnect=1&path=desktop/${id}/websockify&resize=remote` +
-    '&reconnect=true&reconnect_delay=2000&clipboard_up=true&clipboard_down=true&clipboard_seamless=true'
+    '&reconnect=true&reconnect_delay=2000&clipboard_up=true&clipboard_down=true&clipboard_seamless=true' +
+    streamParams
   );
+}
+
+// 动态将画质/帧率配置实时同步给已加载的同源 KasmVNC iframe（免断开重连）
+function applyStreamProfileToDoc(doc: Document | null | undefined, profile: StreamProfile) {
+  if (!doc) return;
+  const setVal = (elemId: string, val: any) => {
+    const el = doc.getElementById(elemId) as HTMLInputElement | HTMLSelectElement | null;
+    if (el) {
+      el.value = String(val);
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  };
+
+  if (profile === 'smooth') {
+    setVal('noVNC_setting_video_quality', 3);
+    setVal('noVNC_setting_framerate', 60);
+    setVal('noVNC_setting_max_video_resolution_x', 1920);
+    setVal('noVNC_setting_max_video_resolution_y', 1080);
+    setVal('noVNC_setting_dynamic_quality_min', 6);
+    setVal('noVNC_setting_dynamic_quality_max', 9);
+    setVal('noVNC_setting_video_out_time', 1);
+  } else if (profile === 'clarity') {
+    setVal('noVNC_setting_video_quality', 4);
+    setVal('noVNC_setting_framerate', 30);
+    setVal('noVNC_setting_video_out_time', 1);
+  } else {
+    setVal('noVNC_setting_video_quality', 10);
+    setVal('noVNC_setting_framerate', 30);
+    setVal('noVNC_setting_max_video_resolution_x', 1280);
+    setVal('noVNC_setting_max_video_resolution_y', 720);
+    setVal('noVNC_setting_dynamic_quality_min', 4);
+    setVal('noVNC_setting_dynamic_quality_max', 8);
+    setVal('noVNC_setting_video_out_time', 1);
+  }
 }
 
 // 「无感输入」钩子：装进同源 iframe，让用户直接在微信里打中文。
@@ -539,6 +601,31 @@ export default function InstanceView({ onOpenMenu }: { onOpenMenu: () => void })
     // 面板重启无效），且新连接常读不到新模式（仍是英文）。整页重载是实测唯一可靠的方式；
     // 「重新连接」按钮与「重启实例」后的重连同样走整页重载（见 restartInstance / 桌面无响应面板）。
     window.location.reload();
+  };
+  // 画质/流畅度档位：默认 smooth (60fps · 极速流畅)
+  const [streamProfile, setStreamProfile] = useState<StreamProfile>(getStreamProfile);
+  const cycleStreamProfile = () => {
+    const nextMap: Record<StreamProfile, StreamProfile> = {
+      smooth: 'balanced',
+      balanced: 'clarity',
+      clarity: 'smooth',
+    };
+    const next = nextMap[streamProfile];
+    setStreamProfile(next);
+    try {
+      window.localStorage.setItem('woc_stream_profile', next);
+    } catch {}
+
+    const doc = frameRef.current?.contentDocument;
+    if (doc) {
+      applyStreamProfileToDoc(doc, next);
+    }
+    const labelMap: Record<StreamProfile, string> = {
+      smooth: '极速流畅（60fps · 推荐）',
+      balanced: '均衡省流（30fps · 平衡）',
+      clarity: '原画高清（画质优先）',
+    };
+    toast(`已切换画质：${labelMap[next]}`, 'ok');
   };
   // 声音（扬声器）开关：每次打开实例都默认【关】，不持久化 on 状态（用户要求）。音频桥是额外一条到 kclient
   // 的 socket.io，蓝牙外放(AirPods)等场景交互较敏感，默认关最稳、最可预期；想听声音手动开即可（开→建立音频桥，
@@ -1228,7 +1315,9 @@ export default function InstanceView({ onOpenMenu }: { onOpenMenu: () => void })
         '#noVNC_control_bar{background:rgba(18,22,30,.96)!important;border:1px solid rgba(255,255,255,.55)!important;box-shadow:0 0 24px rgba(0,0,0,.55)!important;}' +
         '#noVNC_control_bar_handle{opacity:1!important;background:rgba(18,22,30,.96)!important;border:1px solid rgba(255,255,255,.5)!important;}' +
         // macOS 中文输入法需要目标元素有非零尺寸才能激活；KasmVNC 默认 0x0 导致无法切换输入法
-        '#noVNC_keyboardinput{width:1px!important;height:1px!important;opacity:0!important;overflow:hidden!important;}';
+        '#noVNC_keyboardinput{width:1px!important;height:1px!important;opacity:0!important;overflow:hidden!important;}' +
+        // 优化高分屏/Retina屏下的画面清晰度与边缘抗锯齿
+        '#noVNC_container canvas{image-rendering:-webkit-optimize-contrast;image-rendering:crisp-edges;}';
       (doc.head || doc.documentElement).appendChild(st);
     } catch {
       /* 同源正常不会到这 */
@@ -1392,6 +1481,19 @@ export default function InstanceView({ onOpenMenu }: { onOpenMenu: () => void })
               输入：{inputMode === 'seamless' ? '无感' : '转发'}
             </button>
             <button
+              className={'ws-action' + (streamProfile === 'smooth' ? ' on' : '')}
+              title={
+                streamProfile === 'smooth'
+                  ? '画质：极速流畅（60fps · 推荐）。点击切换为「均衡省流」'
+                  : streamProfile === 'balanced'
+                  ? '画质：均衡省流（30fps · 平衡）。点击切换为「原画高清」'
+                  : '画质：原画高清（画质优先）。点击切换为「极速流畅」'
+              }
+              onClick={cycleStreamProfile}
+            >
+              画质：{streamProfile === 'smooth' ? '极速' : streamProfile === 'balanced' ? '均衡' : '高清'}
+            </button>
+            <button
               className="ws-action"
               title="把文本发送到容器剪贴板（局域网 http 下也可用）"
               onClick={() => setShowClip((v) => !v)}
@@ -1508,7 +1610,7 @@ export default function InstanceView({ onOpenMenu }: { onOpenMenu: () => void })
           <iframe
             ref={frameRef}
             className="iv-frame"
-            src={desktopUrl(id)}
+            src={desktopUrl(id, streamProfile)}
             title={`${appLabel} · 实例桌面`}
             allow="clipboard-read; clipboard-write; microphone; camera; autoplay"
             onLoad={() => {
@@ -1518,6 +1620,9 @@ export default function InstanceView({ onOpenMenu }: { onOpenMenu: () => void })
               setTimeout(() => {
                 focusFrame(); // 加载完把键盘焦点交给 VNC
                 injectVncStyle(); // 让原生控制条在深色背景下可见
+                if (frameRef.current?.contentDocument) {
+                  applyStreamProfileToDoc(frameRef.current.contentDocument, streamProfile);
+                }
                 // 无感输入模式的键盘钩子由单独的 effect（依赖 inputMode/frameLoaded）安装，不在此处；
                 // 转发模式则 enable_ime=false，直接打字走纯 keysym（英文/数字正常），中文用底部输入条。
               }, 500);

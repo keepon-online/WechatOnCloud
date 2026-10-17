@@ -11,7 +11,7 @@
     "@fastify/cookie": "^9.4.0",
     "@fastify/static": "^7.0.4",
     "bcryptjs": "^2.4.3",
-    "dockerode": "^4.0.2",
+    "dockerode": "^5.0.1",
     "fastify": "^4.28.1",
     "http-proxy": "^1.18.1",
     "tsx": "^4.19.2"

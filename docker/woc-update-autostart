@@ -26,6 +26,10 @@ if [ -f "$RC_XML" ] && ! grep -q 'class="wechat"' "$RC_XML"; then
   <application class="chromium" type="normal">\
     <decor>no</decor>\
     <maximized>yes</maximized>\
+  </application>\
+  <!-- 小程序窗口（WeChatAppEx 进程，无 WM_CLASS）不强制最大化，保持手机比例尺寸 -->\
+  <application class="" type="normal">\
+    <maximized>no</maximized>\
   </application>' "$RC_XML" 2>/dev/null || true
 fi
 chown -R "${PUID:-1000}:${PGID:-1000}" /config/.config/openbox 2>/dev/null || true

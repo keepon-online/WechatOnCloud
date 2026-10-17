@@ -50,7 +50,8 @@ class PcmPlayer {
 
   init() {
     const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
-    this.audioCtx = new Ctx({ sampleRate: 44100 });
+    // 使用 interactive 提示降低浏览器底层音频缓冲区延迟
+    this.audioCtx = new Ctx({ sampleRate: 44100, latencyHint: 'interactive' });
     this.audioCtx!.resume().catch(() => {});
     this.gain = this.audioCtx!.createGain();
     this.gain.gain.value = 1;
@@ -79,7 +80,8 @@ class PcmPlayer {
     this.buffer = merged;
     const frames = this.buffer.length / 2; // 立体声
     const duration = frames / 44100 / 2; // 与 kclient 的 buffAudio.duration/2 等价
-    if (duration > 0.05 || this.playing) {
+    // 调优初始缓冲门限（0.05s → 0.02s），让微信来电与新消息提示音几乎零延迟同步响起
+    if (duration > 0.02 || this.playing) {
       this.playing = true;
       const buffAudio = this.audioCtx.createBuffer(2, this.buffer.length, 44100);
       const left = buffAudio.getChannelData(0);

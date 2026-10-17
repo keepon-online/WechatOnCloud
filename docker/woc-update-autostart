@@ -6,7 +6,29 @@
 mkdir -p /config/.config/openbox
 cp /defaults/autostart /config/.config/openbox/autostart
 chmod +x /config/.config/openbox/autostart
-chown "${PUID:-1000}:${PGID:-1000}" /config/.config/openbox/autostart 2>/dev/null || true
+
+# 沉浸式单应用无边框规则：去除 Linux 原生窗口装饰与标题栏，主窗口自动全屏填满画布（消除套娃感）
+RC_XML="/config/.config/openbox/rc.xml"
+if [ ! -f "$RC_XML" ]; then
+  cp /etc/xdg/openbox/rc.xml "$RC_XML" 2>/dev/null || true
+fi
+if [ -f "$RC_XML" ] && ! grep -q 'class="wechat"' "$RC_XML"; then
+  sed -i '/<applications>/a \
+  <!-- 沉浸式单应用无边框规则：去除 Linux 窗口装饰与标题栏，主窗口自动全屏填满画布 -->\
+  <application class="wechat" type="normal">\
+    <decor>no</decor>\
+    <maximized>yes</maximized>\
+  </application>\
+  <application class="qq" type="normal">\
+    <decor>no</decor>\
+    <maximized>yes</maximized>\
+  </application>\
+  <application class="chromium" type="normal">\
+    <decor>no</decor>\
+    <maximized>yes</maximized>\
+  </application>' "$RC_XML" 2>/dev/null || true
+fi
+chown -R "${PUID:-1000}:${PGID:-1000}" /config/.config/openbox 2>/dev/null || true
 
 # 文件中转目录（桌面）：确保归 abc(PUID) 所有。否则曾被 root 建成 755 root:root 时，微信(abc 身份)
 # 另存到此处会"保存失败"，面板上传也写不进。每次启动强制纠正属主，兼容历史遗留的 root 属主。

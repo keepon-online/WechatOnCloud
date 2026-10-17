@@ -17,22 +17,22 @@ export function getStreamProfile(): StreamProfile {
 }
 
 // KasmVNC noVNC 页面；反代按实例隔离：/desktop/<id>/* → 对应容器，注入凭据。
-// 优化流畅度：注入帧率 (framerate)、画质档位 (video_quality)、动态视频分辨率上限、本地指针、WebP
+// 优化流畅度：注入帧率 (framerate)、画质档位 (video_quality)、动态视频分辨率上限、本地指针、WebP 与 HiDPI
 function desktopUrl(id: string, profile: StreamProfile = getStreamProfile()) {
   let streamParams = '';
   if (profile === 'smooth') {
     // 极速流畅（默认推荐）：突破 24fps 限制升至 60fps；动态视频分辨率上限 1080p，避免下采样成模糊马赛克；
     // video_out_time=1 让滑动停止后 1s 内立即切回高保真清晰画面；启用本地鼠标指针与 WebP 高效编解码
     streamParams =
-      '&video_quality=3&framerate=60&max_video_resolution_x=1920&max_video_resolution_y=1080&dynamic_quality_min=6&video_out_time=1&prefer_local_cursor=true&enable_webp=true&show_dot=false';
+      '&video_quality=3&framerate=60&max_video_resolution_x=1920&max_video_resolution_y=1080&dynamic_quality_min=6&video_out_time=1&prefer_local_cursor=true&enable_webp=true&show_dot=false&enable_hidpi=false';
   } else if (profile === 'clarity') {
-    // 高清画质：高保真画质优先，30fps，适合精细图文与高保真阅读
+    // 视网膜原画高清：启用 HiDPI 视网膜渲染（避免在 MacBook/高分屏发虚），30fps，高保真画质优先
     streamParams =
-      '&video_quality=4&framerate=30&video_out_time=1&prefer_local_cursor=true&enable_webp=true&show_dot=false';
+      '&video_quality=4&framerate=30&video_out_time=1&prefer_local_cursor=true&enable_webp=true&show_dot=false&enable_hidpi=true';
   } else {
     // 均衡模式：30fps，动态下限 720p，兼顾流畅度与低功耗 NAS CPU / 移动端弱网环境
     streamParams =
-      '&video_quality=10&framerate=30&max_video_resolution_x=1280&max_video_resolution_y=720&dynamic_quality_min=4&dynamic_quality_max=8&video_out_time=1&prefer_local_cursor=true&enable_webp=true&show_dot=false';
+      '&video_quality=10&framerate=30&max_video_resolution_x=1280&max_video_resolution_y=720&dynamic_quality_min=4&dynamic_quality_max=8&video_out_time=1&prefer_local_cursor=true&enable_webp=true&show_dot=false&enable_hidpi=false';
   }
 
   return (
@@ -42,13 +42,20 @@ function desktopUrl(id: string, profile: StreamProfile = getStreamProfile()) {
   );
 }
 
-// 动态将画质/帧率配置实时同步给已加载的同源 KasmVNC iframe（免断开重连）
+// 动态将画质/帧率/HiDPI 配置实时同步给已加载的同源 KasmVNC iframe（免断开重连）
 function applyStreamProfileToDoc(doc: Document | null | undefined, profile: StreamProfile) {
   if (!doc) return;
   const setVal = (elemId: string, val: any) => {
     const el = doc.getElementById(elemId) as HTMLInputElement | HTMLSelectElement | null;
     if (el) {
       el.value = String(val);
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  };
+  const setCheck = (elemId: string, checked: boolean) => {
+    const el = doc.getElementById(elemId) as HTMLInputElement | null;
+    if (el && el.checked !== checked) {
+      el.checked = checked;
       el.dispatchEvent(new Event('change', { bubbles: true }));
     }
   };
@@ -61,10 +68,12 @@ function applyStreamProfileToDoc(doc: Document | null | undefined, profile: Stre
     setVal('noVNC_setting_dynamic_quality_min', 6);
     setVal('noVNC_setting_dynamic_quality_max', 9);
     setVal('noVNC_setting_video_out_time', 1);
+    setCheck('noVNC_setting_enable_hidpi', false);
   } else if (profile === 'clarity') {
     setVal('noVNC_setting_video_quality', 4);
     setVal('noVNC_setting_framerate', 30);
     setVal('noVNC_setting_video_out_time', 1);
+    setCheck('noVNC_setting_enable_hidpi', true);
   } else {
     setVal('noVNC_setting_video_quality', 10);
     setVal('noVNC_setting_framerate', 30);
@@ -73,6 +82,7 @@ function applyStreamProfileToDoc(doc: Document | null | undefined, profile: Stre
     setVal('noVNC_setting_dynamic_quality_min', 4);
     setVal('noVNC_setting_dynamic_quality_max', 8);
     setVal('noVNC_setting_video_out_time', 1);
+    setCheck('noVNC_setting_enable_hidpi', false);
   }
 }
 
@@ -638,7 +648,7 @@ export default function InstanceView({ onOpenMenu }: { onOpenMenu: () => void })
     const labelMap: Record<StreamProfile, string> = {
       smooth: '极速流畅（60fps · 推荐）',
       balanced: '均衡省流（30fps · 平衡）',
-      clarity: '原画高清（画质优先）',
+      clarity: '视网膜高清（HiDPI · 原画）',
     };
     toast(`已切换画质：${labelMap[next]}`, 'ok');
   };
@@ -1326,6 +1336,7 @@ export default function InstanceView({ onOpenMenu }: { onOpenMenu: () => void })
       const st = doc.createElement('style');
       st.id = 'woc-vnc-style';
       st.textContent =
+        'html,body,#noVNC_container{overflow:hidden!important;margin:0!important;padding:0!important;background:#14161c!important;}' +
         '#noVNC_control_bar_anchor{z-index:2147483647!important;}' +
         '#noVNC_control_bar{background:rgba(18,22,30,.96)!important;border:1px solid rgba(255,255,255,.55)!important;box-shadow:0 0 24px rgba(0,0,0,.55)!important;}' +
         '#noVNC_control_bar_handle{opacity:1!important;background:rgba(18,22,30,.96)!important;border:1px solid rgba(255,255,255,.5)!important;}' +
@@ -1500,12 +1511,12 @@ export default function InstanceView({ onOpenMenu }: { onOpenMenu: () => void })
                 streamProfile === 'smooth'
                   ? '画质：极速流畅（60fps · 推荐）。点击切换为「均衡省流」'
                   : streamProfile === 'balanced'
-                  ? '画质：均衡省流（30fps · 平衡）。点击切换为「原画高清」'
-                  : '画质：原画高清（画质优先）。点击切换为「极速流畅」'
+                  ? '画质：均衡省流（30fps · 平衡）。点击切换为「视网膜高清」'
+                  : '画质：视网膜高清（HiDPI · 画质优先）。点击切换为「极速流畅」'
               }
               onClick={cycleStreamProfile}
             >
-              画质：{streamProfile === 'smooth' ? '极速' : streamProfile === 'balanced' ? '均衡' : '高清'}
+              画质：{streamProfile === 'smooth' ? '极速' : streamProfile === 'balanced' ? '均衡' : '原画'}
             </button>
             <button
               className="ws-action"

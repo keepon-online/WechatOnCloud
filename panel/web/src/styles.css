@@ -1924,7 +1924,8 @@ button {
   position: relative;
   flex: 1;
   min-height: 0;
-  background: #000;
+  background: #14161c;
+  overflow: hidden;
 }
 .iv-frame {
   position: absolute;

@@ -30,6 +30,7 @@ import {
   removeInstance as removeInstanceRecord,
   renameInstance,
   setInstanceIcon,
+  setInstanceProxy,
   setInstanceUsers,
   publicInstance,
   getDesktopDark,
@@ -549,7 +550,7 @@ app.post('/api/instances/:id/clientlog', async (req, reply) => {
 app.post('/api/admin/instances', async (req, reply) => {
   const admin = requireAdmin(req, reply);
   if (!admin) return;
-  const { name, reuseVolume, appType } = (req.body as any) ?? {};
+  const { name, reuseVolume, appType, proxyUrl } = (req.body as any) ?? {};
   const allowedUserIds = Array.isArray((req.body as any)?.allowedUserIds) ? (req.body as any).allowedUserIds : [];
   // 名称可留空（自动命名为「微信 1」这类，见 store.ts）；新建弹窗的占位文字一直写着「留空自动命名」，此前却必填
   const instName = typeof name === 'string' ? name.trim() : '';
@@ -566,7 +567,7 @@ app.post('/api/admin/instances', async (req, reply) => {
     }
     reuseVolumeName = reuseVolume;
   }
-  const inst = createInstance(instName, admin.id, allowedUserIds, reuseVolumeName, type);
+  const inst = createInstance(instName, admin.id, allowedUserIds, reuseVolumeName, type, proxyUrl);
   appendPanelLog(
     'INFO',
     `创建实例「${inst.name}」(${type}, id=${inst.id}) by ${admin.username}${reuseVolumeName ? ` · 复用卷 ${reuseVolumeName}` : ''} → 开始创建容器（镜像缺失会自动拉取，首次较慢）`,
@@ -742,6 +743,28 @@ app.post('/api/admin/instances/:id/icon', async (req, reply) => {
     return { instance: setInstanceIcon((req.params as any).id, typeof icon === 'string' ? icon : null) };
   } catch (e: any) {
     return reply.code(400).send({ error: e?.message || '设置图标失败' });
+  }
+});
+
+// 设置实例独立代理（仅管理员）：proxyUrl = http://... / socks5://... / 空(清除)。若实例运行中自动重建生效。
+app.post('/api/admin/instances/:id/proxy', async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
+  const id = (req.params as any).id;
+  const inst = findInstance(id);
+  if (!inst) return reply.code(404).send({ error: '实例不存在' });
+  const { proxyUrl } = (req.body as any) ?? {};
+  try {
+    const p = typeof proxyUrl === 'string' && proxyUrl.trim() ? proxyUrl.trim() : null;
+    const updated = setInstanceProxy(id, p);
+    appendPanelLog('INFO', `设置实例「${inst.name}」(id=${id}) 代理为 ${p || '（已清除）'}`);
+    const rt = await instanceRuntime(inst);
+    if (rt === 'running') {
+      appendPanelLog('INFO', `实例「${inst.name}」当前处于运行中，正在按当前镜像重启以应用新代理…`);
+      await runInstance(inst, { keepImage: true });
+    }
+    return { instance: updated };
+  } catch (e: any) {
+    return reply.code(400).send({ error: e?.message || '设置代理失败' });
   }
 });
 
@@ -969,6 +992,7 @@ app.get('/api/instances/:id/download', async (req, reply) => {
   const name = String((req.query as any)?.name || '').trim();
   try {
     const { size, stream } = await downloadFromInstance(findInstance(id)!, name);
+    reply.header('X-Accel-Buffering', 'no');
     reply.header('content-type', 'application/octet-stream');
     reply.header('content-length', String(size));
     reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
@@ -1212,6 +1236,7 @@ app.get('/api/admin/diagnostics', async (req, reply) => {
   try {
     const buf = await buildDiagnostics(listInstances(), since, { range, 面板版本: CURRENT_VERSION });
     const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+    reply.header('X-Accel-Buffering', 'no');
     reply.header('content-type', 'application/gzip');
     reply.header('content-disposition', `attachment; filename="woc-diag-${range}-${stamp}.tar.gz"`);
     appendPanelLog('INFO', `导出诊断包（范围 ${range}，${buf.length} 字节）`);
@@ -1290,6 +1315,7 @@ app.get('/api/admin/instances/:id/volume/download', async (req, reply) => {
   const name = path.split('/').filter(Boolean).pop() || 'file';
   try {
     const { size, stream } = await volDownloadFile(inst, path);
+    reply.header('X-Accel-Buffering', 'no');
     reply.header('content-type', 'application/octet-stream');
     reply.header('content-length', String(size));
     reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
@@ -1408,6 +1434,7 @@ app.get('/api/admin/instances/:id/volume/backup', async (req, reply) => {
   if (!inst) return reply.code(404).send({ error: '实例不存在' });
   try {
     const stream = await volBackupStream(inst);
+    reply.header('X-Accel-Buffering', 'no');
     reply.header('content-type', 'application/gzip');
     reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(`woc-${inst.name}-backup.tar.gz`)}`);
     return reply.send(stream);

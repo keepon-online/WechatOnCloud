@@ -132,6 +132,8 @@ export class VncAudio {
   private gestureBound = false;
   private destroyed = false;
   private micEnabled = false; // 麦克风默认关：避免一打开实例就 getUserMedia 抢占麦克风（会把 AirPods 切到低质通话模式）
+  // 前端注册的音量峰值回调（rms: 0..1），用于后台检测新消息提示音
+  public onAudioPeak?: (rms: number) => void;
 
   constructor(id: string, micEnabled = false) {
     this.id = id;
@@ -159,9 +161,25 @@ export class VncAudio {
     });
     this.socket.on('audio', (data: ArrayBuffer) => {
       if (this.active && this.player) this.player.feed(data);
+
+      if (this.onAudioPeak) {
+        try {
+          const i16 = new Int16Array(data);
+          let sum = 0;
+          const len = i16.length;
+          for (let i = 0; i < len; i++) {
+            const v = i16[i] / 32768;
+            sum += v * v;
+          }
+          const rms = Math.sqrt(sum / (len || 1));
+          this.onAudioPeak(rms);
+        } catch {
+          /* ignore error */
+        }
+      }
     });
     this.socket.on('connect', () => {
-      if (this.active) this.open();
+      this.open();
     });
     // 关键：断线必须复位 opened，否则重连后 open() 以为已经开过、跳过 emit('open')，
     // 服务端(kclient)永远不会重新开始推流 → 实例升级/重启/面板更新/网络抖动后全程静音
@@ -171,15 +189,20 @@ export class VncAudio {
     });
   }
 
-  // 焦点变化时调用：true=本实例获得焦点（出声+收音），false=失焦（断开设备）。
+  // 焦点变化时调用：true=本实例获得焦点（出声+收音），false=失焦（扬声器静音，但保持音频推流以供后台新消息检测）。
   setActive(on: boolean) {
     if (this.destroyed) return;
     this.active = on;
     if (on) {
+      if (!this.player) {
+        this.player = new PcmPlayer();
+        this.player.init();
+      }
       this.open();
       this.startMic();
     } else {
-      this.close();
+      this.player?.destroy();
+      this.player = null;
       this.stopMic();
     }
   }
@@ -198,7 +221,7 @@ export class VncAudio {
       this.socket.emit('open', '');
       this.opened = true;
     }
-    if (!this.player) {
+    if (this.active && !this.player) {
       this.player = new PcmPlayer();
       this.player.init();
     }

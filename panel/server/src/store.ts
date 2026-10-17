@@ -58,6 +58,7 @@ export interface Instance {
   // hard：内存超此值时，无论是否有人在会话都重启（防止 OOM 拖垮宿主）。
   memSoftLimitMB?: number;
   memHardLimitMB?: number;
+  proxyUrl?: string; // 可选的实例独立代理（如 http://192.168.1.100:7890 或 socks5://...）
 }
 
 // 面板级全局设置（持久化进 accounts.json）。
@@ -256,6 +257,7 @@ export function publicInstance(i: Instance) {
     icon: i.icon,
     createdAt: i.createdAt,
     createdBy: i.createdBy,
+    proxyUrl: i.proxyUrl,
     memSoftLimitMB: i.memSoftLimitMB,
     memHardLimitMB: i.memHardLimitMB,
   };
@@ -329,6 +331,7 @@ export function createInstance(
   allowedUserIds: string[] = [],
   reuseVolumeName?: string,
   appType: AppType = 'wechat',
+  proxyUrl?: string,
 ) {
   const type: AppType = APP_TYPES.includes(appType) ? appType : 'wechat';
   let id = randomBytes(5).toString('hex'); // 10 hex chars
@@ -344,6 +347,7 @@ export function createInstance(
     id,
     name: name.trim() || autoInstanceName(type),
     appType: type,
+    proxyUrl: proxyUrl?.trim() || undefined,
     containerName: `woc-wx-${id}`,
     volumeName,
     kasmUser: 'woc',
@@ -363,6 +367,23 @@ export function createInstance(
   }
   persist();
   return inst;
+}
+
+// 设置/清除实例独立代理。传 null 或空表示清除代理。
+export function setInstanceProxy(id: string, proxyUrl: string | null) {
+  const inst = findInstance(id);
+  if (!inst) throw new Error('实例不存在');
+  const p = (proxyUrl || '').trim();
+  if (!p) {
+    delete inst.proxyUrl;
+  } else {
+    if (!/^(http|https|socks5):\/\/.+/i.test(p)) {
+      throw new Error('代理地址需以 http://、https:// 或 socks5:// 开头');
+    }
+    inst.proxyUrl = p;
+  }
+  persist();
+  return publicInstance(inst);
 }
 
 export function renameInstance(id: string, name: string) {

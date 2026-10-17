@@ -488,6 +488,18 @@ function envList(inst: Instance): string[] {
     `CUSTOM_USER=${inst.kasmUser}`,
     `PASSWORD=${inst.kasmPassword}`,
   ];
+  if (inst.proxyUrl) {
+    env.push(
+      `HTTP_PROXY=${inst.proxyUrl}`,
+      `HTTPS_PROXY=${inst.proxyUrl}`,
+      `ALL_PROXY=${inst.proxyUrl}`,
+      `http_proxy=${inst.proxyUrl}`,
+      `https_proxy=${inst.proxyUrl}`,
+      `all_proxy=${inst.proxyUrl}`,
+      'NO_PROXY=localhost,127.0.0.1,local,.local',
+      'no_proxy=localhost,127.0.0.1,local,.local',
+    );
+  }
   // baseimage 仅检查该变量是否「已设置」（值无关），设上即不再给 Xvnc 加 -hw3d。
   if (!ENABLE_GPU) env.push('DISABLE_DRI=1');
   // 透传 os 伪装开关给容器内的 00-woc-identity 钩子（决定是否把 /etc/os-release 改成 deepin）。

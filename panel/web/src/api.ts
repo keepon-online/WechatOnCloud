@@ -57,6 +57,7 @@ export interface PanelInstance {
   createdBy: string;
   memSoftLimitMB?: number;
   memHardLimitMB?: number;
+  proxyUrl?: string;
 }
 export interface MemLimits {
   soft: number | null;
@@ -266,10 +267,15 @@ export const api = {
 
   // 微信实例
   listInstances: () => req<{ instances: InstanceWithStatus[] }>('/api/instances'),
-  createInstance: (name: string, allowedUserIds: string[] = [], reuseVolume?: string, appType: AppType = 'wechat') =>
+  createInstance: (name: string, allowedUserIds: string[] = [], reuseVolume?: string, appType: AppType = 'wechat', proxyUrl?: string) =>
     req<{ instance: PanelInstance }>('/api/admin/instances', {
       method: 'POST',
-      body: JSON.stringify({ name, allowedUserIds, reuseVolume: reuseVolume || undefined, appType }),
+      body: JSON.stringify({ name, allowedUserIds, reuseVolume: reuseVolume || undefined, appType, proxyUrl: proxyUrl || undefined }),
+    }),
+  setInstanceProxy: (id: string, proxyUrl: string | null) =>
+    req<{ instance: PanelInstance }>(`/api/admin/instances/${id}/proxy`, {
+      method: 'POST',
+      body: JSON.stringify({ proxyUrl }),
     }),
   regenMachineId: (id: string) =>
     req(`/api/admin/instances/${id}/regen-machine-id`, { method: 'POST' }),

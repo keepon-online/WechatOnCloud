@@ -277,6 +277,7 @@ export default function Admin({ onOpenMenu, onChangePassword }: { onOpenMenu: ()
   const [securityInst, setSecurityInst] = useState<InstanceWithStatus | null>(null); // 安全（内存阈值）弹窗
   const [volumeInst, setVolumeInst] = useState<InstanceWithStatus | null>(null); // 数据卷管理弹窗
   const [iconInst, setIconInst] = useState<InstanceWithStatus | null>(null); // 图标编辑弹窗
+  const [proxyInst, setProxyInst] = useState<InstanceWithStatus | null>(null); // 独立代理弹窗
   const [acting, setActing] = useState<Record<string, string>>({}); // 实例 id → 进行中的动作文案（启动中/升级中…）
   // 管理页信息架构：实例 / 用户 / 系统 三个 Tab（此前 7 个区块一条长滚动，找东西全靠翻）。
   // 记住上次停留的 Tab（sessionStorage），升级轮询等跨 Tab 状态不受影响——Tab 只控制渲染。
@@ -636,6 +637,7 @@ export default function Admin({ onOpenMenu, onChangePassword }: { onOpenMenu: ()
                     onSecurity={() => setSecurityInst(inst)}
                     onVolume={() => setVolumeInst(inst)}
                     onIcon={() => setIconInst(inst)}
+                    onProxy={() => setProxyInst(inst)}
                   />
                 ))}
               </div>
@@ -902,6 +904,17 @@ export default function Admin({ onOpenMenu, onChangePassword }: { onOpenMenu: ()
           }}
         />
       )}
+      {proxyInst && (
+        <InstanceProxyModal
+          inst={proxyInst}
+          onClose={() => setProxyInst(null)}
+          onDone={() => {
+            setProxyInst(null);
+            toast('已更新代理设置', 'ok');
+            load();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -934,6 +947,53 @@ function RenameInstance({ inst, onClose, onDone }: { inst: InstanceWithStatus; o
             取消
           </button>
           <button className="btn btn-primary" disabled={busy || !name.trim() || name.trim() === inst.name}>
+            保存
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function InstanceProxyModal({ inst, onClose, onDone }: { inst: InstanceWithStatus; onClose: () => void; onDone: () => void }) {
+  const [proxyUrl, setProxyUrl] = useState(inst.proxyUrl || '');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErr('');
+    setBusy(true);
+    try {
+      await api.setInstanceProxy(inst.id, proxyUrl.trim() || null);
+      onDone();
+    } catch (e: any) {
+      setErr(e.message || '保存失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <form className="card modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+        <h2>网络代理 · {inst.name}</h2>
+        <div className="muted small" style={{ marginBottom: 12 }}>
+          为该实例配置独立出网代理（支持 HTTP、HTTPS 或 SOCKS5，如 <code>http://172.17.0.1:7890</code> 或 <code>socks5://172.17.0.1:1080</code>）。若实例处于运行中，保存后将自动重启生效。留空保存可清除代理。
+        </div>
+        <input
+          className="input"
+          placeholder="代理地址（如 http://172.17.0.1:7890，留空清除）"
+          value={proxyUrl}
+          onChange={(e) => setProxyUrl(e.target.value)}
+          autoFocus
+        />
+        {err && <div className="error">{err}</div>}
+        <div className="modal-actions">
+          <button type="button" className="btn" onClick={onClose} disabled={busy}>
+            取消
+          </button>
+          <button className="btn btn-primary" disabled={busy}>
             保存
           </button>
         </div>
@@ -1276,6 +1336,7 @@ function InstanceAdminCard({
   onSecurity,
   onVolume,
   onIcon,
+  onProxy,
 }: {
   inst: InstanceWithStatus;
   outdated?: boolean;
@@ -1293,6 +1354,7 @@ function InstanceAdminCard({
   onSecurity: () => void;
   onVolume: () => void;
   onIcon: () => void;
+  onProxy: () => void;
 }) {
   const wx = inst.wechat;
   const busy = BUSY_PHASES.includes(wx.phase);
@@ -1337,7 +1399,7 @@ function InstanceAdminCard({
         <span className={'tag ' + badge.cls}>{badge.text}</span>
       </div>
       {/* 次要元数据独占一行（可换行），不再和名字挤在标题行导致名字被截断、徽标竖排换行 */}
-      {((outdated && !acting) || inst.imageVersion) && (
+      {((outdated && !acting) || inst.imageVersion || inst.proxyUrl) && (
         <div className="inst-meta">
           {outdated && !acting && (
             <span className="tag tag-warn" title="该实例的镜像落后于最新版，点「升级实例」可更新">
@@ -1350,6 +1412,11 @@ function InstanceAdminCard({
               title={/^\d+\.\d+\.\d+$/.test(inst.imageVersion) ? '该实例当前运行的镜像版本' : '本地自构建镜像（无发布版本号，显示镜像短 id）'}
             >
               镜像 {/^\d+\.\d+\.\d+$/.test(inst.imageVersion) ? `v${inst.imageVersion}` : inst.imageVersion.slice(0, 8)}
+            </span>
+          )}
+          {inst.proxyUrl && (
+            <span className="tag tag-muted" title={`独立代理: ${inst.proxyUrl}`}>
+              代理
             </span>
           )}
         </div>
@@ -1434,6 +1501,9 @@ function InstanceAdminCard({
                   </button>
                   <button className="btn-text" onClick={onVolume} title="数据卷：备份/恢复、上传 PC 微信数据、文件管理">
                     数据卷
+                  </button>
+                  <button className="btn-text" onClick={onProxy} title="设置该实例独立网络代理（HTTP/HTTPS/SOCKS5）">
+                    代理
                   </button>
                 </div>
               </div>
@@ -1957,6 +2027,7 @@ const APP_OPTIONS: { type: AppType; desc: string; ready: boolean }[] = [
 
 function CreateInstance({ subs, onClose, onDone }: { subs: PanelUser[]; onClose: () => void; onDone: () => void }) {
   const [name, setName] = useState('');
+  const [proxyUrl, setProxyUrl] = useState('');
   const [appType, setAppType] = useState<AppType>('wechat');
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [err, setErr] = useState('');
@@ -1983,7 +2054,7 @@ function CreateInstance({ subs, onClose, onDone }: { subs: PanelUser[]; onClose:
     setErr('');
     setBusy(true);
     try {
-      await api.createInstance(name.trim(), [...sel], reuse || undefined, appType);
+      await api.createInstance(name.trim(), [...sel], reuse || undefined, appType, proxyUrl.trim() || undefined);
       onDone();
     } catch (e: any) {
       setErr(e.message || '创建失败');
@@ -2013,6 +2084,7 @@ function CreateInstance({ subs, onClose, onDone }: { subs: PanelUser[]; onClose:
           ))}
         </div>
         <input className="input" placeholder="实例名称（留空自动命名）" maxLength={30} value={name} onChange={(e) => setName(e.target.value)} />
+        <input className="input" placeholder="网络代理（可选，如 http://172.17.0.1:7890）" value={proxyUrl} onChange={(e) => setProxyUrl(e.target.value)} />
         {appType === 'chromium' && (
           <div className="muted small">Chromium 浏览器随镜像就绪，创建后直接「进入实例」即可（无需下载安装）。</div>
         )}

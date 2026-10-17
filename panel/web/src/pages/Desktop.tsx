@@ -599,6 +599,8 @@ export default function InstanceView({ onOpenMenu }: { onOpenMenu: () => void })
   // 否则监听还挂在已销毁的旧文档上：无感输入的中文转发（打的中文被吞、只剩英文）、粘贴桥、控制权心跳全部静默失效。
   const [frameGen, setFrameGen] = useState(0);
   const clip = useRef<ClipState>({ guarded: false, remoteText: null, remoteNewer: false, typed: [], lastLocal: null }); // 见 installClipboardGuard
+  const flashTimerRef = useRef<any>(null);
+  const origTitleRef = useRef<string>(document.title);
   const [loadStuck, setLoadStuck] = useState(false); // iframe 久未加载出来（疑似实例无响应）
   const [dragging, setDragging] = useState(false);
   const [showFiles, setShowFiles] = useState(false);
@@ -663,6 +665,10 @@ export default function InstanceView({ onOpenMenu }: { onOpenMenu: () => void })
       window.localStorage.setItem('woc_sound_on', v ? '1' : '0');
     } catch {
       /* ignore */
+    }
+    // 借用户点击手势：若通知权限未定，预先向用户申请桌面通知权限
+    if (v && window.isSecureContext && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
     }
   };
   const [showKeys, setShowKeys] = useState(false);
@@ -1002,6 +1008,56 @@ export default function InstanceView({ onOpenMenu }: { onOpenMenu: () => void })
     if (!showVnc || !id || !soundOn) return; // 声音默认关：未开则完全不连音频桥（回到 1.1.7 无音频的连接行为）
     const audio = new VncAudio(id, micOn);
     audioRef.current = audio;
+
+    // 音量峰值检测：当微信在容器内播放新消息/来电提示音时，若用户在后台，自动弹出桌面通知并闪烁标题
+    let notifyCooldown = 0;
+    audio.onAudioPeak = (rms: number) => {
+      const THRESH = 0.07; // 提示音 RMS 能量门限
+      const COOLDOWN = 4000; // 4s 冷却
+      if (rms < THRESH) return;
+      const now = Date.now();
+      if (notifyCooldown + COOLDOWN > now) return;
+      notifyCooldown = now;
+
+      // 仅在失焦或处于后台标签页时提醒（前台直接听到声音/看到画面，无需弹窗打扰）
+      const inBackground = document.hidden || !document.hasFocus();
+      if (!inBackground) return;
+
+      const appTitle = appLabel || '应用';
+      const icon = document.querySelector('link[rel~="icon"]')?.getAttribute('href') || '/icon-192.png';
+
+      // 1. 系统级 HTML5 桌面通知（支持点击回到网页并聚焦）
+      if ('Notification' in window && Notification.permission === 'granted') {
+        try {
+          const n = new Notification(`云微 · ${appTitle}`, {
+            body: '收到新消息或提示音',
+            icon,
+            tag: 'woc-notification',
+          });
+          n.onclick = () => {
+            window.focus();
+            n.close();
+          };
+        } catch {}
+      }
+
+      // 2. 标签栏标题闪烁提示
+      if (!flashTimerRef.current) {
+        origTitleRef.current = document.title;
+        let alt = false;
+        flashTimerRef.current = setInterval(() => {
+          if (!document.hidden && document.hasFocus()) {
+            if (flashTimerRef.current) clearInterval(flashTimerRef.current);
+            flashTimerRef.current = null;
+            document.title = origTitleRef.current;
+          } else {
+            document.title = alt ? `【新消息】${origTitleRef.current}` : `【　　　】${origTitleRef.current}`;
+            alt = !alt;
+          }
+        }, 800);
+      }
+    };
+
     audio.connect().catch(() => {}); // 加载 socket.io 失败：本次无声，再开一次「声音」会重新加载
     const isFocused = () => !document.hidden && document.hasFocus();
     const sync = () => audio.setActive(isFocused());
@@ -1017,6 +1073,11 @@ export default function InstanceView({ onOpenMenu }: { onOpenMenu: () => void })
     window.addEventListener('blur', sync);
     window.addEventListener('pagehide', onPageHide);
     return () => {
+      if (flashTimerRef.current) {
+        clearInterval(flashTimerRef.current);
+        flashTimerRef.current = null;
+        document.title = origTitleRef.current;
+      }
       document.removeEventListener('visibilitychange', sync);
       window.removeEventListener('focus', sync);
       window.removeEventListener('blur', sync);
@@ -1552,7 +1613,7 @@ export default function InstanceView({ onOpenMenu }: { onOpenMenu: () => void })
             </button>
             <button
               className={'ws-action' + (soundOn ? ' on' : '')}
-              title={soundOn ? '声音已开：已连接实例音频。点击关闭（关闭可减少一条到实例的连接，更稳）' : '声音已关：默认不连音频桥（连接更稳）。点此开启以听到实例声音'}
+              title={soundOn ? '声音已开（已启用后台新消息桌面通知与标签闪烁）：点击关闭' : '声音已关：点此开启以听到声音，并启用后台新消息桌面通知'}
               onClick={toggleSound}
             >
               声音：{soundOn ? '开' : '关'}

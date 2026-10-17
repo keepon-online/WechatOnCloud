@@ -18,7 +18,16 @@ woc/
 └── ICON_256.PNG                    # 256×256
 ```
 
-## 构建
+## 方式一：Compose 直跑（推荐先用这条）
+
+fpk 只是应用中心集成形态，不阻塞使用。fnOS 自带 Docker 与 Compose 界面，可以直接跑起来：
+
+1. 先在 fork 仓库发布一个 `vX.Y.Z` Release，让 GitHub Actions 把镜像推到 `ghcr.io/keepon-online/{woc-panel,wechat-on-cloud}`（fork 的 Actions 需手动启用一次；workflow 自动以仓库 owner 为命名空间，无需修改）；
+2. fnOS「Docker → Compose 项目 → 创建项目」，粘贴**仓库根目录** `docker-compose.yml` 的内容；
+3. 项目环境变量按 [`.env.fnos.example`](.env.fnos.example) 填写（镜像前缀、密码、`WOC_DATA_ROOT`、GPU 等，模板内含逐项说明）；
+4. 在 fnOS「Docker → 镜像」手动预拉一次实例镜像 `ghcr.io/keepon-online/wechat-on-cloud:<版本>`——fnOS 内置加速不覆盖面板经 docker.sock 触发的拉取，镜像先到本地后新建实例直接复用。
+
+## 方式二：fpk 打包
 
 需先在开发机装飞牛官方 `fnpack` CLI（见上方文档）。
 
@@ -38,8 +47,8 @@ fnpack build           # 产出 wechat-on-cloud-<version>.fpk
 3. **compose 项目声明**：官方 Docker 应用案例（developer.fnnas.com/docs/examples/docker）在 `config/resource` 里用 `docker-project`（`projects: [{ "name": ..., "path": "docker" }]`，path 相对 `app/`）声明 compose；本工程目前只声明了 `data-share`，请确认应用中心不声明也会执行 `app/docker/docker-compose.yaml`。
 4. **端口**：manifest 的 `service_port=8080` 是容器内端口，而宿主实际对外的是 `WOC_HTTP_PORT`（默认 36080）；官方案例的宿主端口取自 `service_port`（`${TRIM_SERVICE_PORT}:80`）。应用中心的「打开」入口与端口占用检查（`checkport=true`）可能因此指错端口，需实测后二选一对齐。
 
-另外本 compose 与根目录 `docker-compose.yml` 已有差异（镜像源、`pull_policy`、`WOC_DISABLE_IPV6` 等后加的配置项），上架前宜再对齐一次。
+本 compose 已与根目录 `docker-compose.yml` 对齐（镜像前缀经 `WOC_IMAGE_PREFIX` 参数化，默认本 fork 的 GHCR 命名空间；此前缺失的 `WOC_ENABLE_GPU`、实例网络隔离、内存/watchdog、`/host-dev` 探测挂载、日志上限、Host 白名单等配置项均已补齐），上游后续更新根 compose 时记得同步。
 
 `WOC_DATA_ROOT`（实例数据目录，#133）留空时实例数据仍在 Docker 数据卷里；填了宿主绝对路径（如 `/vol1/1000/woc`）后，之后新建的实例数据落在「该目录/woc-data-<实例id>」，可在飞牛文件管理里直接取微信收到的文件。行为与根目录 `.env.example` 里的同名配置一致，只影响之后新建的实例。
 
-镜像本身从 GHCR 拉取（多架构 amd64/arm64），fpk 内不含镜像、体积很小。
+镜像本身经 `WOC_IMAGE_PREFIX` 从指定 registry 拉取（安装向导可改，默认本 fork 的 GHCR；多架构 amd64/arm64），fpk 内不含镜像、体积很小。

@@ -1,26 +1,75 @@
 # fnOS 应用中心会直接执行本 compose 来启停应用。
-# 与仓库根的 docker-compose.yml 等价：面板为唯一服务，挂 docker.sock 按需创建微信实例。
-# 注意：面板需要访问宿主 docker.sock 来动态创建/销毁微信实例容器（等同宿主 root 权限）。
+# 与仓库根 docker-compose.yml 对齐：面板为唯一服务，挂 docker.sock 按需创建实例容器并反代。
+# 注意：面板需要访问宿主 docker.sock 来动态创建/销毁实例容器（等同宿主 root 权限）。
 #       因此本应用必须能挂载 /var/run/docker.sock；若 fnOS 沙箱禁止，应用将无法新建实例。
+# 镜像源前缀经安装向导的 WOC_IMAGE_PREFIX 注入（默认本 fork 的 GHCR 命名空间，
+# 含 60FPS/GPU/原子批量输入等优化）；拉不动时可换 ghcr.nju.edu.cn/keepon-online（南大反代），
+# 或 docker.io/gloridust（上游官方，不含本 fork 优化）。
 services:
   panel:
-    image: ghcr.io/gloridust/woc-panel:${WOC_VERSION:-latest}
+    image: ${WOC_IMAGE_PREFIX:-ghcr.io/keepon-online}/woc-panel:${WOC_VERSION:-latest}
     container_name: woc-panel
-    pull_policy: always
+    # 与根 compose 一致用默认 pull_policy（missing）：本地已有同名镜像就直接用，没有才拉。
+    # 想强制更新到最新版：先在 fnOS 镜像页手动拉新 tag，或删掉本地旧镜像再重装应用。
     environment:
       - PORT=8080
-      - WOC_WECHAT_IMAGE=ghcr.io/gloridust/wechat-on-cloud:${WOC_VERSION:-latest}
+      # 新建实例时使用的镜像（多架构，amd64/arm64 自动匹配）；前缀跟随 WOC_IMAGE_PREFIX。
+      - WOC_WECHAT_IMAGE=${WOC_IMAGE_PREFIX:-ghcr.io/keepon-online}/wechat-on-cloud:${WOC_VERSION:-latest}
+      # 透传给每个实例容器（KasmVNC 基础镜像用它们降权运行）
       - PUID=${WOC_PUID:-1000}
       - PGID=${WOC_PGID:-1000}
       - TZ=${WOC_TZ:-Asia/Shanghai}
+      # 摄像头直通（可选）：留空 = 自动探测（需下方 /host-dev 挂载，fnOS 需先加载 v4l2loopback）
+      - WOC_VIDEO_DEVICES=${WOC_VIDEO_DEVICES:-}
+      # GPU 硬件编码：fnOS 物理机 + 真实核显（/dev/dri）才经向导设 1；虚拟机/无核显留空走软件渲染
+      - WOC_ENABLE_GPU=${WOC_ENABLE_GPU:-}
+      # 宿主内核禁用 IPv6 时实例 nginx 起不来；面板会自动检测，检测不到时可设 1 强制
+      - WOC_DISABLE_IPV6=${WOC_DISABLE_IPV6:-}
+      # 实例数据目录：留空 = Docker 数据卷；填宿主绝对路径（如 /vol1/1000/woc）后，
+      # 新建实例的数据落在「该目录/woc-data-<实例id>」，飞牛文件管理里直接可见
+      - WOC_DATA_ROOT=${WOC_DATA_ROOT:-}
+      # 实例接入的 Docker 网络：默认自动建实例专用网络（woc-instances）并与面板其它网络隔离
+      - WOC_DOCKER_NETWORK=${WOC_DOCKER_NETWORK:-}
+      - WOC_INSTANCE_NETWORK=${WOC_INSTANCE_NETWORK:-}
+      # 实例资源：可选内存上限（GiB，0=不限）+ watchdog 双阈值（soft 柔和自愈 / hard 强制重启）
+      - WOC_INSTANCE_MEM_GB=${WOC_INSTANCE_MEM_GB:-}
+      - WOC_INSTANCE_MEM_SOFT_MB=${WOC_INSTANCE_MEM_SOFT_MB:-1500}
+      - WOC_INSTANCE_MEM_HARD_MB=${WOC_INSTANCE_MEM_HARD_MB:-2500}
+      - WOC_WATCHDOG_INTERVAL_SEC=${WOC_WATCHDOG_INTERVAL_SEC:-300}
+      - WOC_WATCHDOG_HEALTH_FAILS=${WOC_WATCHDOG_HEALTH_FAILS:-0}
+      # 桌面连接反复无应答（KasmVNC 卡死）时自动重启实例；0 = 只断开记日志、不自动重启
+      - WOC_STUCK_HEAL=${WOC_STUCK_HEAL:-1}
+      # 设备伪装：os-release 伪装成 deepin（默认开）
+      - WOC_SPOOF_OS=${WOC_SPOOF_OS:-1}
+      # 登录会话时长（天，默认 30），会话已落盘持久化
+      - WOC_SESSION_DAYS=${WOC_SESSION_DAYS:-30}
+      # 拉取实例镜像的"无进度"超时（分钟，默认 5）
+      - WOC_PULL_STALL_MIN=${WOC_PULL_STALL_MIN:-5}
+      # 面板首个管理员账号（仅首次启动、无账号文件时写入；务必改掉默认密码）
       - PANEL_ADMIN_USER=${WOC_USER:-admin}
       - PANEL_ADMIN_PASSWORD=${WOC_PASSWORD:-wechat}
       - PANEL_DATA=/data/accounts.json
-      # 安装向导「实例数据目录」：新建实例的数据放到该宿主目录（#133）。留空 = Docker 数据卷。
-      - WOC_DATA_ROOT=${WOC_DATA_ROOT:-}
+      # DNS-rebinding 防护：套 HTTPS 反代部署时把对外域名加进白名单；默认放行私网
+      - PANEL_ALLOWED_HOSTS=${PANEL_ALLOWED_HOSTS:-}
+      # 反代不在本机时填它的地址，登录限速才按真实来源计数
+      - WOC_TRUSTED_PROXIES=${WOC_TRUSTED_PROXIES:-}
+
     volumes:
+      # 面板账号数据（用户、实例元信息、密码哈希）
       - ./data-panel:/data
+      # 面板经 docker 引擎创建/启动/删除实例容器、exec 触发下载、读取进度
       - /var/run/docker.sock:/var/run/docker.sock
+      # 摄像头 / GPU 自动探测：面板据此发现宿主 /dev/videoN 与 /dev/dri 渲染节点
+      - /dev:/host-dev:ro
+
     ports:
-      - "${WOC_HTTP_PORT:-36080}:8080"
+      - "${WOC_HTTP_PORT:-36080}:8080"   # 面板 = 唯一对外入口
+
+    # 日志硬上限：长期运行/异常刷错不会无限吃磁盘（实例容器的同类上限由面板创建时注入）
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "2"
+
     restart: unless-stopped

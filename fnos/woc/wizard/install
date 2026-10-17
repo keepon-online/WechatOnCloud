@@ -31,6 +31,26 @@
         "field": "WOC_VERSION",
         "label": "镜像版本（建议钉到具体版本）",
         "initValue": "latest"
+      },
+      {
+        "type": "tips",
+        "helpText": "镜像源前缀 = registry 地址 + 命名空间。默认用本 fork 的 GHCR 源（含 60FPS、GPU 加速、原子批量输入等优化，需先在 fork 仓库发布过 Release 让 CI 推出镜像）。GHCR 直连拉不动时换成南京大学反代 ghcr.nju.edu.cn/keepon-online；想跑上游官方版（无本 fork 优化）换成 docker.io/gloridust。"
+      },
+      {
+        "type": "text",
+        "field": "WOC_IMAGE_PREFIX",
+        "label": "镜像源前缀（registry/命名空间）",
+        "initValue": "ghcr.io/keepon-online"
+      },
+      {
+        "type": "tips",
+        "helpText": "GPU 硬件编码：fnOS 物理机且 CPU 带核显（如 Intel 系列，宿主存在 /dev/dri）时填 1，面板会自动探测渲染节点并映射进实例，显著降低 60FPS 高流畅档的 CPU 占用。虚拟机、无核显或不确定就留空（软件渲染，微信这类静态界面差异不大）。"
+      },
+      {
+        "type": "text",
+        "field": "WOC_ENABLE_GPU",
+        "label": "GPU 硬件编码（有核显填 1，否则留空）",
+        "initValue": ""
       }
     ]
   },

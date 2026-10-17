@@ -27,6 +27,10 @@
   <a href="doc/技术方案.md">技术方案</a>
 </p>
 
+> **本仓库是 [keepon-online](https://github.com/keepon-online) 维护的 fork**（上游：[Gloridust/WechatOnCloud](https://github.com/Gloridust/WechatOnCloud)，上方 Star / Release / Issues 徽章与交流群均指上游）。
+> 在上游基础上新增：**60FPS 串流与画质档位 + GPU 硬件渲染加速**、**原子批量输入接口**（打字到上屏延迟约 240ms→40ms）、**无边框沉浸式全屏 / HiDPI 视网膜高清 / 低延迟音频**，并提前移植上游 PR #161（小程序窗口尺寸保护）、#162（应用内复制图片取回本机）。
+> **镜像发布在本 fork 的 GHCR**：`ghcr.io/keepon-online/{woc-panel,wechat-on-cloud}`（发布 Release 由 Actions 自动构建）；飞牛 fnOS 部署环境变量模板见 [fnos/.env.fnos.example](fnos/.env.fnos.example)。
+
 <table>
   <tr>
     <td width="50%"><img src="doc/img/Screenshot-1.png" alt="云微 · 面板主界面" /></td>

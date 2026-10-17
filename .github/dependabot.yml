@@ -1,0 +1,20 @@
+# 依赖自动更新：面板前后端 npm 依赖与 GitHub Actions 用料的升级 PR。
+# 仅开安全补丁与小版本的自动 PR（默认 weekly），大版本升级人工评估。
+# fork 仓库在 Actions 启用后同样生效；不需要可在仓库 Settings → Code security 关闭。
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /panel/server
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /panel/web
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3

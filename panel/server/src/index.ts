@@ -71,6 +71,8 @@ import {
   deleteInstanceFile,
   instanceLogs,
   buildDiagnostics,
+  batchInputInInstance,
+  type InputJob,
   typeInInstance,
   keyInInstance,
   pasteImageInInstance,
@@ -1104,6 +1106,47 @@ app.post('/api/instances/:id/key', async (req, reply) => {
     return { ok: true };
   } catch (e: any) {
     return reply.code(500).send({ error: e?.message || '按键失败' });
+  }
+});
+
+// 批量输入接口：把一段打字与紧随的按键（如回车/空格/退格）打包成一次 docker exec 批量执行，
+// 消除多段串行 HTTP + docker exec 的累积延迟（将 ~240ms 降至 ~40ms）
+app.post('/api/instances/:id/input', async (req, reply) => {
+  const u = requireAuth(req, reply);
+  if (!u) return;
+  const id = (req.params as any).id;
+  if (!userCanAccess(u, id)) return reply.code(403).send({ error: '无权访问该实例' });
+  const inst = findInstance(id);
+  if (!inst) return reply.code(404).send({ error: '实例不存在' });
+  const rawJobs = (req.body as any)?.jobs;
+  if (!Array.isArray(rawJobs) || rawJobs.length === 0 || rawJobs.length > 50) {
+    return reply.code(400).send({ error: 'jobs 必须为 1~50 项的数组' });
+  }
+  const jobs: InputJob[] = [];
+  let totalTextLen = 0;
+  for (const j of rawJobs) {
+    if (!j || typeof j !== 'object') return reply.code(400).send({ error: 'job 格式不合法' });
+    if (j.kind === 'text') {
+      if (typeof j.data !== 'string') return reply.code(400).send({ error: 'text 任务 data 必须为字符串' });
+      totalTextLen += j.data.length;
+      if (totalTextLen > 5000) return reply.code(400).send({ error: '批量输入的文本总长度超过限制（最多 5000 字）' });
+      jobs.push({ kind: 'text', data: j.data });
+    } else if (j.kind === 'key') {
+      if (typeof j.data !== 'string' || !/^(?:(?:ctrl|shift|alt|super)\+){0,3}[A-Za-z_]{1,20}$/.test(j.data)) {
+        return reply.code(400).send({ error: '按键名不合法' });
+      }
+      jobs.push({ kind: 'key', data: j.data });
+    } else {
+      return reply.code(400).send({ error: `不支持的输入任务类型: ${j.kind}` });
+    }
+  }
+  const holder = claimControl(u, id);
+  if (holder) return reply.code(409).send(controlBusy(holder));
+  try {
+    await batchInputInInstance(inst, jobs);
+    return { ok: true };
+  } catch (e: any) {
+    return reply.code(500).send({ error: e?.message || '批量输入失败' });
   }
 });
 

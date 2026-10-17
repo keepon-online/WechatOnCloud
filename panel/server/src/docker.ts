@@ -1829,27 +1829,92 @@ function scheduleClipRestore(inst: Instance): void {
   clipTimers.set(inst.id, t);
 }
 
-// 通过 xdotool 在实例容器内输入文字（绕过 VNC keysym 限制，解决中文 IME 吞字问题）。
-// 用 base64 传递文本避免 shell 转义问题，xclip 写入剪贴板后 xdotool 模拟 Ctrl+V 粘贴；剪贴板打完归还（见上）。
-export async function typeInInstance(inst: Instance, text: string): Promise<void> {
-  const b64 = Buffer.from(text, 'utf8').toString('base64');
-  const cmd = [
-    ...X_PRELUDE,
-    CLIP_SAVE,
-    `echo '${b64}' | base64 -d > ${CLIP_DIR}/typed.txt`,
-    // xclip -i 会 daemon 化常驻持有剪贴板选区，并继承 exec 的 stdout/stderr；不重定向的话 docker exec
-    // 要等这俩 fd 关闭，实测每次卡 ~2s。重定向到 /dev/null 后台后，整条链路从 ~2.1s 降到 ~0.08s。
-    `xclip -selection clipboard -i ${CLIP_DIR}/typed.txt >/dev/null 2>&1`,
-    xdoKey('ctrl+v'),
-  ].join('\n');
+export type InputJob =
+  | { kind: 'text'; data: string }
+  | { kind: 'key'; data: string };
+
+// 批量输入：支持将多段文字与功能按键组合在一个 docker exec 执行中，大幅降低网络和进程创建开销。
+export async function batchInputInInstance(inst: Instance, jobs: InputJob[]): Promise<void> {
+  const normalized: InputJob[] = [];
+  for (const j of jobs) {
+    if (j.kind === 'text') {
+      if (!j.data) continue;
+      const last = normalized[normalized.length - 1];
+      if (last && last.kind === 'text') {
+        last.data += j.data;
+      } else {
+        normalized.push({ kind: 'text', data: j.data });
+      }
+    } else if (j.kind === 'key') {
+      if (!j.data) continue;
+      if (!/^(?:(?:ctrl|shift|alt|super)\+){0,3}[A-Za-z_]{1,20}$/.test(j.data)) {
+        throw new Error(`按键名不合法: ${j.data}`);
+      }
+      normalized.push({ kind: 'key', data: j.data });
+    }
+  }
+  if (!normalized.length) return;
+
+  const hasText = normalized.some((j) => j.kind === 'text');
+  const hasPaste = normalized.some((j) => j.kind === 'key' && /^ctrl\+v$/i.test(j.data));
+
+  // 纯按键且不涉及 Ctrl+V 粘贴：无需剪贴板锁与归还调度，直接快速执行
+  if (!hasText && !hasPaste) {
+    const cmd = [
+      ...X_PRELUDE,
+      ...normalized.map((j) => xdoKey(j.data)),
+    ].join('\n');
+    await execCapture(inst, ['bash', '-c', cmd]);
+    return;
+  }
+
+  // 涉及文字或粘贴：同一实例串行，确保剪贴板状态一致与安全恢复
   await withClipLock(inst.id, async () => {
-    cancelClipRestore(inst.id);
+    if (hasPaste && !hasText) {
+      if (cancelClipRestore(inst.id)) await restoreClipboard(inst);
+    } else {
+      cancelClipRestore(inst.id);
+    }
+
+    const scriptParts: string[] = [...X_PRELUDE];
+    if (hasText) {
+      scriptParts.push(CLIP_SAVE);
+    }
+
+    let prevWasText = false;
+    for (const job of normalized) {
+      if (job.kind === 'text') {
+        const b64 = Buffer.from(job.data, 'utf8').toString('base64');
+        scriptParts.push(
+          `echo '${b64}' | base64 -d > ${CLIP_DIR}/typed.txt`,
+          `xclip -selection clipboard -i ${CLIP_DIR}/typed.txt >/dev/null 2>&1`,
+          xdoKey('ctrl+v'),
+        );
+        prevWasText = true;
+      } else {
+        if (prevWasText) {
+          // 前序是 Ctrl+V 粘贴文字时，给目标应用 30ms 异步处理 XSelection，避免后续按键抢跑
+          scriptParts.push('sleep 0.03');
+        }
+        scriptParts.push(xdoKey(job.data));
+        prevWasText = false;
+      }
+    }
+
     try {
-      await execCapture(inst, ['bash', '-c', cmd]);
+      await execCapture(inst, ['bash', '-c', scriptParts.join('\n')]);
     } finally {
-      scheduleClipRestore(inst);
+      if (hasText) {
+        scheduleClipRestore(inst);
+      }
     }
   });
+}
+
+// 通过 xdotool 在实例容器内输入文字（绕过 VNC keysym 限制，解决中文 IME 吞字问题）。
+// 委托至 batchInputInInstance 执行。
+export async function typeInInstance(inst: Instance, text: string): Promise<void> {
+  return batchInputInInstance(inst, [{ kind: 'text', data: text }]);
 }
 
 // 把本机剪贴板里的文字粘进应用：粘贴桥判断本机剪贴板比容器的新时走这里（在别处复制后回来直接 Ctrl+V、
@@ -1901,28 +1966,9 @@ export async function pasteImageInInstance(inst: Instance, mime: string, content
 }
 
 // 通过 xdotool 在实例容器内模拟一次按键（如 Return / BackSpace）。
-// 用于「无感输入」模式：中文经 xclip 转发期间，把被截下的回车/退格按序送出，保证顺序、避免抢跑。
-// key 为 xdotool keysym 名，可带至多 3 个修饰键前缀（如 ctrl+v、ctrl+shift+Tab）；
-// 只允许字母 / 下划线 / 固定修饰键名与 "+"，杜绝 shell 注入。
+// 委托至 batchInputInInstance 执行。
 export async function keyInInstance(inst: Instance, key: string): Promise<void> {
-  if (!/^(?:(?:ctrl|shift|alt|super)\+){0,3}[A-Za-z_]{1,20}$/.test(key)) throw new Error('按键名不合法');
-  const cmd = [
-    'set -e',
-    'display="${DISPLAY:-}"',
-    'if [ -z "$display" ]; then for x in /tmp/.X11-unix/X*; do [ -e "$x" ] || continue; display=":${x##*X}"; break; done; fi',
-    'export DISPLAY="${display:-:1}"',
-    'command -v xdotool >/dev/null 2>&1 || { echo "xdotool not installed in instance image" >&2; exit 127; }',
-    xdoKey(key),
-  ].join('\n');
-  if (!/^ctrl\+v$/i.test(key)) {
-    await execCapture(inst, ['bash', '-c', cmd]);
-    return;
-  }
-  // 粘贴：打字借用的剪贴板若还没归还，先归还再按，免得贴出刚打的字
-  await withClipLock(inst.id, async () => {
-    if (cancelClipRestore(inst.id)) await restoreClipboard(inst);
-    await execCapture(inst, ['bash', '-c', cmd]);
-  });
+  return batchInputInInstance(inst, [{ kind: 'key', data: key }]);
 }
 
 // ---------- 数据卷管理（仅管理员；路由层用 requireAdmin 限制） ----------

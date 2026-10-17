@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { api, appProfile } from '../api';
+import { api, appProfile, type InputJob } from '../api';
 import { useUI } from '../ui';
 import { useAuth } from '../auth';
 import { useInstances } from '../AppShell';
@@ -89,7 +89,7 @@ function installSeamlessIme(
   onTyped: (text: string) => void,
   onFail: (err: any) => void,
 ): () => void {
-  type Job = { kind: 'text'; data: string } | { kind: 'key'; data: string };
+  type Job = InputJob;
   const queue: Job[] = [];
   let draining = false;
   const active = () => draining || queue.length > 0;
@@ -102,17 +102,32 @@ function installSeamlessIme(
     if (draining) return;
     draining = true;
     while (queue.length) {
-      const job = queue[0];
-      try {
-        if (job.kind === 'text') {
-          onTyped(job.data);
-          await api.typeInInstance(instId, job.data);
+      // 批量取出至多 20 项，消除多次串行 HTTP + docker exec 的往返累积延迟
+      const batchCount = Math.min(queue.length, 20);
+      const rawBatch = queue.slice(0, batchCount);
+
+      // 合并相邻的 text 任务（如拼音短语 + 空格或连续输入）
+      const merged: InputJob[] = [];
+      for (const item of rawBatch) {
+        if (item.kind === 'text') {
+          onTyped(item.data);
+          const last = merged[merged.length - 1];
+          if (last && last.kind === 'text') {
+            last.data += item.data;
+          } else {
+            merged.push({ kind: 'text', data: item.data });
+          }
+        } else {
+          merged.push(item);
         }
-        else await api.keyInInstance(instId, job.data);
-      } catch (e) {
-        onFail(e); // 单条失败丢弃、继续后续，避免卡住队列；但要让用户知道刚打的字没发出去
       }
-      queue.shift();
+
+      try {
+        await api.batchInputInInstance(instId, merged);
+      } catch (e) {
+        onFail(e); // 单批失败丢弃、继续后续，避免卡住队列；但要让用户知道刚打的字没发出去
+      }
+      queue.splice(0, batchCount);
     }
     draining = false;
   };
@@ -1373,12 +1388,11 @@ export default function InstanceView({ onOpenMenu }: { onOpenMenu: () => void })
     setImeSending(true);
     try {
       noteTyped(clip.current, t);
-      await api.typeInInstance(id, t);
+      const jobs: InputJob[] = [{ kind: 'text', data: t }];
       // 打完补一个回车把消息发出去（issue #81）；可由「自动回车」开关关掉（issue #125），
-      // 关掉时只把文字填进应用输入框，发不发由用户自己按。焦点【始终留在本输入条】。
-      // 切勿在转发模式把焦点切回虚拟机——那等于开了"无感输入"，用户接着打的拼音会以原始 keysym 直灌微信
-      // 输入框（出现 "nniih'h你好啊" 这种串码）。下一条仍在本条用本机输入法安全地打。
-      if (autoEnter) await api.keyInInstance(id, 'Return');
+      // 关掉时只把文字填进应用输入框，发不发由用户自己按。批量送达，消除二次往返延迟。
+      if (autoEnter) jobs.push({ kind: 'key', data: 'Return' });
+      await api.batchInputInInstance(id, jobs);
       setImeText('');
     } catch (e: any) {
       toast(e?.message || '发送失败：请确认实例已「升级实例」（镜像含 xclip/xdotool）', 'error');

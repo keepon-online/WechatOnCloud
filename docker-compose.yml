@@ -1,10 +1,10 @@
 # WechatOnCloud —— 面板为唯一服务；微信实例由面板按需动态创建（docker run）。
 # 面板挂载 docker.sock 来创建/启动/删除微信实例容器，并反向代理到它们的 KasmVNC。
-# 镜像默认从 Docker Hub 拉取（GHCR 备用），无需本地构建。要改配置：复制 .env.example 为 .env 后修改。
+# 镜像默认从 GHCR 拉取（含本 fork 优化，备用国内反代），无需本地构建。要改配置：复制 .env.example 为 .env 后修改。
 services:
   panel:
-    # 镜像源前缀默认 Docker Hub（飞牛等 NAS 有加速）；拉不动时改 .env 的 WOC_IMAGE_PREFIX 切到 GHCR/国内反代（见 .env.example）。
-    image: ${WOC_IMAGE_PREFIX:-docker.io/gloridust}/woc-panel:${WOC_VERSION:-latest}
+    # 镜像源前缀默认本 fork 的 GHCR（含 60FPS/GPU/原子批量输入等优化）；拉不动时改 .env 的 WOC_IMAGE_PREFIX 切到国内反代或上游官方镜像（见 .env.example）。
+    image: ${WOC_IMAGE_PREFIX:-ghcr.io/keepon-online}/woc-panel:${WOC_VERSION:-latest}
     container_name: woc-panel
     # pull_policy 用默认（missing）：本地已有同名镜像就直接用，没有才去镜像源拉。
     # 这样「发布前本地自构建」与「线上拉取」都能用同一份 compose。
@@ -13,7 +13,7 @@ services:
     environment:
       - PORT=8080
       # 新建微信实例时使用的镜像（多架构，amd64/arm64 自动匹配）；前缀同样跟随 WOC_IMAGE_PREFIX。
-      - WOC_WECHAT_IMAGE=${WOC_IMAGE_PREFIX:-docker.io/gloridust}/wechat-on-cloud:${WOC_VERSION:-latest}
+      - WOC_WECHAT_IMAGE=${WOC_IMAGE_PREFIX:-ghcr.io/keepon-online}/wechat-on-cloud:${WOC_VERSION:-latest}
       # 透传给每个微信实例容器（KasmVNC 基础镜像用它们降权运行）
       - PUID=${WOC_PUID:-1000}
       - PGID=${WOC_PGID:-1000}

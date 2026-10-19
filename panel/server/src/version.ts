@@ -18,9 +18,9 @@ export interface VersionInfo {
 // 镜像命名空间：从 WOC_WECHAT_IMAGE 推断（面板与实例镜像同账号）。
 // 例 docker.io/gloridust/wechat-on-cloud:latest → gloridust；ghcr.io/gloridust/... 同理。
 function imageOwner(): string {
-  const img = (process.env.WOC_WECHAT_IMAGE || 'docker.io/gloridust/wechat-on-cloud').split('@')[0];
+  const img = (process.env.WOC_WECHAT_IMAGE || 'ghcr.io/keepon-online/wechat-on-cloud').split('@')[0];
   const segs = img.split('/'); // [registry?, owner, image[:tag]]
-  return segs.length >= 2 ? segs[segs.length - 2] : 'gloridust';
+  return segs.length >= 2 ? segs[segs.length - 2] : 'keepon-online';
 }
 const PANEL_REPO = process.env.WOC_PANEL_REPO || 'woc-panel';
 

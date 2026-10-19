@@ -14,7 +14,7 @@ import { instanceAppType, getDesktopDark, type Instance } from './store.js';
 // 「面板 vX 管的实例镜像也是 vX」，杜绝旧面板拉到新实例镜像（或反之）产生未验证组合。
 // 用户在 env 显式指定了非 latest tag（自行锁版）则完全尊重；开发版面板（dev-*）保持 latest。
 function resolveWechatImage(): string {
-  const raw = process.env.WOC_WECHAT_IMAGE || 'ghcr.io/gloridust/wechat-on-cloud:latest';
+  const raw = process.env.WOC_WECHAT_IMAGE || 'ghcr.io/keepon-online/wechat-on-cloud:latest';
   const ver = (process.env.WOC_VERSION || '').trim().replace(/^v/, '');
   if (!/^\d+\.\d+\.\d+$/.test(ver)) return raw; // 开发版/未知版本 → 保持原样
   const noDigest = raw.split('@')[0];
@@ -868,7 +868,7 @@ export async function pruneOldWocImages(): Promise<void> {
 
     // 2) 识别 woc 镜像的仓库路径（从 WECHAT_IMAGE 推断 owner，兼容 ghcr/docker.io/无前缀各种 tag 写法）。
     const ref = parseImageRef(WECHAT_IMAGE);
-    const owner = ref?.repo.split('/').slice(0, -1).join('/') || 'gloridust';
+    const owner = ref?.repo.split('/').slice(0, -1).join('/') || 'keepon-online';
     const panelRepo = process.env.WOC_PANEL_REPO || 'woc-panel';
     const wocRepoNeedles = [`${owner}/wechat-on-cloud`, `${owner}/${panelRepo}`];
 

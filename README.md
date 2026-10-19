@@ -81,28 +81,28 @@
 
 > 需已安装 Docker（含 Compose 插件）。x86_64 / arm64 均可。不熟悉 Docker？先读 [运行原理与 Docker 指南](doc/运行原理.md)。
 
-`docker-compose.yml` 默认引用 **Docker Hub** 上的镜像 `docker.io/gloridust/{woc-panel,wechat-on-cloud}`（同时也发布到 GHCR 作为备用源）。
-**这两个镜像需先存在**——要么官方已发布（你能直接拉取），要么你在本地自行构建。二选一：
+`docker-compose.yml` 默认引用本 fork 在 **GHCR** 上的镜像 `ghcr.io/keepon-online/{woc-panel,wechat-on-cloud}`（含 60FPS/GPU/原子输入等全部优化）。
+**这两个镜像需先存在**——要么你在 fork 仓库发布过 Release 由 Actions 自动构建推出（你能直接拉取），要么你在本地自行构建。二选一：
 
 **方式 A · 本地自构建（官方尚未发布镜像时用这个）**
 
 ```bash
-git clone https://github.com/Gloridust/WechatOnCloud.git WechatOnCloud
+git clone https://github.com/keepon-online/WechatOnCloud.git WechatOnCloud
 cd WechatOnCloud
 cp .env.example .env            # 至少改掉默认密码 WOC_PASSWORD
 ./scripts/build-local.sh        # 构建面板 + 微信实例镜像，打成 compose 用的同名标签
 docker compose up -d            # compose 默认优先用本地镜像，不会再去远端拉
 ```
 
-**方式 B · 拉取官方镜像（推荐，无需 clone 整个仓库）**
+**方式 B · 拉取镜像（推荐，无需 clone 整个仓库）**
 
-部署**只需要 `docker-compose.yml` 这一个文件**——它用 `image:` 直接拉官方镜像，面板数据放在该文件旁自动创建的 `./data-panel` 目录，不依赖仓库里的其它文件。
+部署**只需要 `docker-compose.yml` 这一个文件**——它用 `image:` 直接拉镜像，面板数据放在该文件旁自动创建的 `./data-panel` 目录，不依赖仓库里的其它文件。
 
 - **命令行**：丢进一个空目录拉起即可
   ```bash
   mkdir woc && cd woc
-  curl -fsSL https://raw.githubusercontent.com/Gloridust/WechatOnCloud/main/docker-compose.yml -o docker-compose.yml
-  docker compose up -d            # 默认从 Docker Hub 拉取（公开、amd64/arm64 多架构）
+  curl -fsSL https://raw.githubusercontent.com/keepon-online/WechatOnCloud/main/docker-compose.yml -o docker-compose.yml
+  docker compose up -d            # 默认从 GHCR 拉取（公开、amd64/arm64 多架构）
   ```
   > `raw.githubusercontent.com` 拉不动时，在 GitHub 网页打开根目录的 [docker-compose.yml](docker-compose.yml)，复制内容自己建个同名文件即可。
 
@@ -110,7 +110,7 @@ docker compose up -d            # compose 默认优先用本地镜像，不会�
 
 > **改配置（强烈建议至少改密码）**：默认管理员 **admin / wechat**。登录后在「修改密码」里改；或部署前在 `docker-compose.yml` 旁放一个 `.env`（从 [.env.example](.env.example) 下载改名），又或在 NAS 的 Compose 环境变量里填 `WOC_PASSWORD`、`WOC_HTTP_PORT`、`WOC_IMAGE_PREFIX` 等（全部可配置项见 [.env.example](.env.example)）。
 
-> **镜像源**：默认 Docker Hub（国内外通用、免登录，**飞牛等 NAS 还内置了 Docker Hub 加速**，通常比 GHCR 更稳）。拉不动时设 `WOC_IMAGE_PREFIX` 切到备用源 `ghcr.io/gloridust` 或国内反代 `ghcr.nju.edu.cn/gloridust`（更多源见 [.env.example](.env.example)）。报错 `denied` = 该源上还没有镜像，换源或用方式 A 本地构建。
+> **镜像源**：默认本 fork 的 GHCR 源 `ghcr.io/keepon-online`（含全部优化）。拉不动时设 `WOC_IMAGE_PREFIX` 切到南京大学反代 `ghcr.nju.edu.cn/keepon-online`，或切换为上游官方镜像 `docker.io/gloridust`（更多源见 [.env.example](.env.example)）。报错 `denied` = 该源上还没有镜像，换源或用方式 A 本地构建。
 
 无论哪种方式，都会拉起面板容器 `woc-panel`（唯一对外服务）。浏览器访问 `http://<NAS_IP>:36080`：
 
@@ -121,10 +121,10 @@ docker compose up -d            # compose 默认优先用本地镜像，不会�
 
 之后被授权的用户换任意设备打开同一地址登录面板，看到自己有权访问的实例，进入即是**同一个**会话。
 
-> **🛠️ NAS / 飞牛(fnOS) 用户必看——首次新建实例若卡住报 `创建容器失败：… registry-1.docker.io … timeout`**：
-> 这是 Docker **守护进程**拉取实例镜像超时。NAS 自带的「Docker Hub 加速」一般只作用于你在 NAS 界面**手动拉镜像**，不覆盖面板（经 docker.sock）触发的拉取，于是直连 `docker.io` 超时。
-> **最省事的解法**：先在 NAS 的 **Docker → 镜像 → 拉取** 里手动拉一次 `gloridust/wechat-on-cloud:latest`（和你拉 `woc-panel` 同样的方式）。镜像到本地后，面板新建实例会直接复用、不再联网拉取 → 立即成功。
-> 想一劳永逸：给 Docker 守护进程配「镜像加速器」（`/etc/docker/daemon.json` 的 `registry-mirrors`，改完重启 Docker），或把 `WOC_IMAGE_PREFIX` 换成国内可达源（如 `ghcr.nju.edu.cn/gloridust`）后重建面板。
+> **🛠️ NAS / 飞牛(fnOS) 用户必看——首次新建实例若卡住报 `创建容器失败：… timeout`**：
+> 这是 Docker **守护进程**拉取实例镜像超时。NAS 自带的加速一般只作用于你在 NAS 界面**手动拉镜像**，不覆盖面板（经 docker.sock）触发的拉取，于是直连 GHCR 超时。
+> **最省事的解法**：先在 NAS 的 **Docker → 镜像 → 拉取** 里手动拉一次 `ghcr.io/keepon-online/wechat-on-cloud:latest`（和你拉 `woc-panel` 同样的方式）。镜像到本地后，面板新建实例会直接复用、不再联网拉取 → 立即成功。
+> 想一劳永逸：给 Docker 守护进程配「镜像加速器」（`/etc/docker/daemon.json` 的 `registry-mirrors`，改完重启 Docker），或把 `WOC_IMAGE_PREFIX` 换成国内可达源（如 `ghcr.nju.edu.cn/keepon-online`）后重建面板。
 
 > 宿主只对外暴露面板的 `36080` 一个端口；实例容器仅在 docker 网络内、由面板反代，不直连宿主。要改端口/版本/账号见 `.env`（可配置项见 [.env.example](.env.example)）。镜像会按 CPU 架构自动适配（[详见文档](doc/运行原理.md#架构自动适配)）。
 
